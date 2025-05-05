@@ -3,9 +3,10 @@ import re
 import datetime
 import subprocess
 import argparse
+from pathlib import Path
 
 # === CONFIGURATION ===
-DEFAULT_LOG_FILE = "/path/to/your/server/logs/latest.log"
+DEFAULT_LOG_DIR = "/path/to/your/server/logs"
 LOGIN_PATTERN = re.compile(r"\[.*\]: (.+) joined the game")
 MIN_UPTIME_DAYS = 2
 MAX_LOGIN_AGE_DAYS = 7
@@ -13,33 +14,43 @@ MAX_LOGIN_AGE_DAYS = 7
 # === FUNCTIONS ===
 
 def get_uptime_days():
-    """Return the system uptime in days."""
     with open("/proc/uptime", "r") as f:
         uptime_seconds = float(f.readline().split()[0])
-        return uptime_seconds / 86400  # seconds in a day
+        return uptime_seconds / 86400
 
-def last_login_time(log_file):
-    """Parse the log and return the datetime of the last login."""
-    last_login = None
-    if not os.path.exists(log_file):
-        print(f"Log file not found: {log_file}")
-        return None
+def get_log_files(log_dir):
+    """Return log files modified in the last 7 days."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=MAX_LOGIN_AGE_DAYS)
+    log_files = []
 
-    with open(log_file, 'r') as file:
-        for line in file:
-            match = LOGIN_PATTERN.search(line)
-            if match:
-                time_match = re.match(r"\[(\d{2}):(\d{2}):(\d{2})\]", line)
-                if time_match:
-                    hours, minutes, seconds = map(int, time_match.groups())
-                    log_datetime = datetime.datetime.combine(
-                        datetime.date.today(), datetime.time(hours, minutes, seconds)
-                    )
-                    last_login = log_datetime
-    return last_login
+    for path in Path(log_dir).glob("*.log"):
+        mod_time = datetime.datetime.fromtimestamp(path.stat().st_mtime)
+        if mod_time >= cutoff:
+            log_files.append((path, mod_time.date()))
+
+    return log_files
+
+def parse_last_login(log_files):
+    """Return the most recent login datetime from the list of log files."""
+    latest_login = None
+
+    for path, file_date in log_files:
+        with open(path, 'r', errors='ignore') as file:
+            for line in file:
+                match = LOGIN_PATTERN.search(line)
+                if match:
+                    time_match = re.match(r"\[(\d{2}):(\d{2}):(\d{2})\]", line)
+                    if time_match:
+                        hours, minutes, seconds = map(int, time_match.groups())
+                        login_time = datetime.datetime.combine(
+                            file_date, datetime.time(hours, minutes, seconds)
+                        )
+                        if latest_login is None or login_time > latest_login:
+                            latest_login = login_time
+
+    return latest_login
 
 def shutdown_system(dry_run=False):
-    """Shutdown the system, or simulate shutdown if dry_run is True."""
     if dry_run:
         print("Dry run enabled. Would shut down the system now.")
     else:
@@ -47,29 +58,34 @@ def shutdown_system(dry_run=False):
         subprocess.run(["sudo", "shutdown", "-h", "now"])
 
 def main():
-    parser = argparse.ArgumentParser(description="Shutdown server if no Minecraft logins in 7 days and uptime exceeds threshold.")
-    parser.add_argument("--dry-run", action="store_true", help="Simulate the shutdown without taking action")
-    parser.add_argument("--log-file", default=DEFAULT_LOG_FILE, help="Path to the Minecraft latest.log file")
-
+    parser = argparse.ArgumentParser(description="Shut down the server if no Minecraft logins in 7 days and uptime > 2 days.")
+    parser.add_argument("--dry-run", action="store_true", help="Simulate the shutdown without actually doing it")
+    parser.add_argument("--log-dir", default=DEFAULT_LOG_DIR, help="Path to the directory containing Minecraft logs")
     args = parser.parse_args()
 
     uptime_days = get_uptime_days()
     if uptime_days < MIN_UPTIME_DAYS:
-        print(f"Uptime is only {uptime_days:.2f} days. Minimum required is {MIN_UPTIME_DAYS} days. Skipping shutdown.")
+        print(f"Uptime is only {uptime_days:.2f} days. Required: {MIN_UPTIME_DAYS} days. Skipping shutdown.")
         return
 
-    login_time = last_login_time(args.log_file)
+    log_files = get_log_files(args.log_dir)
+    if not log_files:
+        print("No log files found in the last 7 days.")
+        shutdown_system(dry_run=args.dry_run)
+        return
+
+    last_login = parse_last_login(log_files)
     now = datetime.datetime.now()
 
-    if not login_time:
-        print("No login entries found.")
-        should_shutdown = True
-    else:
-        delta_days = (now - login_time).days
-        print(f"Last login was {delta_days} day(s) ago.")
-        should_shutdown = delta_days >= MAX_LOGIN_AGE_DAYS
+    if not last_login:
+        print("No logins found in the last 7 days.")
+        shutdown_system(dry_run=args.dry_run)
+        return
 
-    if should_shutdown:
+    delta = now - last_login
+    print(f"Most recent login: {last_login.strftime('%Y-%m-%d %H:%M:%S')} ({delta.days} days ago)")
+
+    if delta.days >= MAX_LOGIN_AGE_DAYS:
         shutdown_system(dry_run=args.dry_run)
     else:
         print("Login detected within the past 7 days. No shutdown.")
