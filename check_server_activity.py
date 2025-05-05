@@ -50,7 +50,7 @@ def shutdown_system(dry_run=False):
     uptime_days = get_uptime_days()
     if uptime_days < MIN_UPTIME_DAYS:
         print(f"Uptime is only {uptime_days:.2f} days. Required: {MIN_UPTIME_DAYS} days. Skipping shutdown.")
-    else if dry_run:
+    elif dry_run:
         print("Dry run enabled. Would shut down the system now.")
     else:
         print("Shutting down the system.")
