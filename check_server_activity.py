@@ -11,15 +11,12 @@ LOGIN_PATTERN = re.compile(r"\[.*\]: (.+) joined the game")
 MIN_UPTIME_DAYS = 2
 MAX_LOGIN_AGE_DAYS = 7
 
-# === FUNCTIONS ===
-
 def get_uptime_days():
     with open("/proc/uptime", "r") as f:
         uptime_seconds = float(f.readline().split()[0])
         return uptime_seconds / 86400
 
 def get_log_files(log_dir):
-    """Return log files modified in the last 7 days."""
     cutoff = datetime.datetime.now() - datetime.timedelta(days=MAX_LOGIN_AGE_DAYS)
     log_files = []
 
@@ -31,7 +28,6 @@ def get_log_files(log_dir):
     return log_files
 
 def parse_last_login(log_files):
-    """Return the most recent login datetime from the list of log files."""
     latest_login = None
 
     for path, file_date in log_files:
@@ -70,9 +66,7 @@ def main():
 
     log_files = get_log_files(args.log_dir)
     if not log_files:
-        print("No log files found in the last 7 days.")
-        shutdown_system(dry_run=args.dry_run)
-        return
+        raise RuntimeError("No log files found in the last 7 days. Cannot determine player activity.")
 
     last_login = parse_last_login(log_files)
     now = datetime.datetime.now()
